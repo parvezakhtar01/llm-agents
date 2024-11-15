@@ -1,0 +1,12 @@
+Metadata-Version: 2.1
+Name: llm-agents
+Version: 0.1.0
+License-File: LICENSE
+Requires-Dist: fastapi
+Requires-Dist: uvicorn[standard]
+Requires-Dist: python-dotenv
+Requires-Dist: mangum
+Requires-Dist: openai
+Requires-Dist: yfinance
+Requires-Dist: serpapi
+Requires-Dist: motor
