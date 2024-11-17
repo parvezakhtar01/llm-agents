@@ -2,16 +2,20 @@ from fastapi import FastAPI
 import uvicorn
 import os
 
-from api.api_v0.api import router as api_v0_router
+from app.api.api_v0.api import router as api_v0_router
 from mangum import Mangum
 from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
 
-
 load_dotenv()
 
-root_path = os.getenv('ENV', default='')
-app = FastAPI(root_path=f'/{root_path}')
+# root_path = os.getenv('ENV', default='')
+# app = FastAPI(root_path=f'/{root_path}')
+app = FastAPI(
+    title="Stock Analysis API",
+    description="API for analyzing stocks using multiple agents",
+    version="1.0.0"
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -26,7 +30,6 @@ app.include_router(api_v0_router, prefix="/api/v0")
 
 # The magic that allows the integration with AWS Lambda
 handler = Mangum(app)
-
 
 if __name__ == "__main__":
     uvicorn.run(app, port=8000)
