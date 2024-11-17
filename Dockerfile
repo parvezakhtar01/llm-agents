@@ -1,14 +1,33 @@
-FROM public.ecr.aws/lambda/python:3.10
+# Use Python slim image for a smaller footprint
+FROM python:3.11-slim
 
-# Copy requirements.txt
-COPY requirements.txt ${LAMBDA_TASK_ROOT}
+# Set working directory
+WORKDIR /app
 
-# Install the specified packages
-RUN pip install -r requirements.txt
+# Set environment variables
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1
 
-# Copy function code. This copies EVERYTHING inside the app folder to the lambda root.
-COPY ./app ${LAMBDA_TASK_ROOT}
+# Install system dependencies
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends gcc && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
-# Set the CMD to your handler (could also be done as a parameter override outside of the Dockerfile)
-# Since we copied 
-CMD ["main.handler"]
+# Copy only necessary files
+COPY requirements.txt .
+COPY setup.py .
+COPY app/ ./app/
+COPY .env .
+COPY .env.example .
+
+# Install dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Expose the port
+EXPOSE 8000
+
+
+# Command to run the application
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

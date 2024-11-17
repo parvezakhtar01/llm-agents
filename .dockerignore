@@ -1,0 +1,16 @@
+**/__pycache__
+**/.pytest_cache
+**/.coverage
+**/*.pyc
+**/*.pyo
+**/*.pyd
+**/.DS_Store
+**/.git
+**/.env
+**/.venv
+**/dist
+**/build
+**/*.egg-infocodebase_overview.md
+dev_util
+LICENSE
+README.md
