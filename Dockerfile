@@ -1,5 +1,5 @@
 # Use Python slim image for a smaller footprint
-FROM python:3.11-slim
+FROM --platform=linux/amd64 python:3.11-slim
 
 # Set working directory
 WORKDIR /app
@@ -34,4 +34,11 @@ RUN find . -type d -name __pycache__ -exec rm -r {} + 2>/dev/null || true && \
 EXPOSE 8000
 
 # Command to run the application
-CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+#CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+# Set the ENTRYPOINT and CMD for Lambda
+ENTRYPOINT [ "/usr/local/bin/python", "-m", "awslambdaric" ]
+CMD [ "app.main.handler" ]
+
+# Set the CMD to your handler (could also be done as a parameter override outside of the Dockerfile)
+# Since we copied
+CMD ["main.handler"]

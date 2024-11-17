@@ -29,7 +29,10 @@ app.add_middleware(
 app.include_router(api_v0_router, prefix="/api/v0")
 
 # The magic that allows the integration with AWS Lambda
-handler = Mangum(app)
-
+# Configure Mangum with optimal settings for Lambda
+handler = Mangum(app,
+    lifespan="off",  # Disable lifespan to speed up cold starts
+    api_gateway_base_path=None,  # Handle base path stripping
+)
 if __name__ == "__main__":
     uvicorn.run(app, port=8000)

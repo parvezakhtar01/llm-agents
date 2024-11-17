@@ -1,3 +1,22 @@
+## Test Health Check Endpoint (/api/v0/items):
+
+```bash curl -X GET "https://ffom4klve4.execute-api.ap-south-1.amazonaws.com/v1/api/v0/items" \
+-H "accept: application/json"
+```
+
+## Test Stock Analysis LLM Agent Endpoint (/api/v0/stocks/analyze):
+
+```bash
+curl -X POST "https://ffom4klve4.execute-api.ap-south-1.amazonaws.com/v1/api/v0/stocks/analyze" \
+-H "accept: application/json" \
+-H "Content-Type: application/json" \
+-d '{
+    "instruction": "Analyze tech stocks AAPL MSFT GOOG",
+    "parameters": {}
+}'
+```
+
+
 # Introduction
 
 This repo holds the source code for the article: [API Service with FastAPI + AWS Lambda + API Gateway and Make it Work](https://medium.com/@fanchenbao/api-service-with-fastapi-aws-lambda-api-gateway-and-make-it-work-c20edcf77bff). It consists of four main components
