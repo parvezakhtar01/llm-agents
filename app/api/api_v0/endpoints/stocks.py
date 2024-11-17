@@ -11,6 +11,7 @@ import json
 from datetime import datetime
 from openai import AsyncOpenAI
 import traceback
+from app.utils.metrics import MetricsTracker
 
 from app.prompts import query_classification_prompt, instruction_parsing_prompt, final_response_prompt
 
@@ -61,6 +62,10 @@ class StockAnalysisResponse(BaseModel):
     confidence_score: float
     meta_information: Dict[str, Any]
     results: Dict[str, Any]
+    metrics: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Aggregated metrics from all agents and operations"
+    )
 
 
 async def get_openai_client() -> AsyncOpenAI:
@@ -82,6 +87,7 @@ class MasterAgent:
         self.query_classification_prompt = query_classification_prompt.prompt
         self.parse_instruction_prompt = instruction_parsing_prompt.prompt
         self.final_response_prompt = final_response_prompt.prompt
+        self.metrics_tracker = MetricsTracker()
 
         # Function schemas for different operations
         self.schemas = {
@@ -183,6 +189,7 @@ class MasterAgent:
             temperature: float = 0.7
     ) -> Dict[str, Any]:
         """Enhanced LLM call with operation-specific schema and error handling"""
+        self.metrics_tracker.start_operation(f"llm_call_{operation_type}")
         try:
             function_schema = self.schemas.get(operation_type)
 
@@ -200,14 +207,27 @@ class MasterAgent:
 
             response = await self.client.chat.completions.create(**request_params)
 
+            # Track model usage
+            self.metrics_tracker.track_model_usage(
+                model_name=request_params["model"],
+                operation_type=operation_type,
+                prompt_tokens=response.usage.prompt_tokens,
+                completion_tokens=response.usage.completion_tokens,
+                parameters=request_params
+            )
+
+            self.metrics_tracker.end_operation(f"llm_call_{operation_type}")
+
             if function_schema and response.choices[0].message.function_call:
                 return json.loads(response.choices[0].message.function_call.arguments)
             return json.loads(response.choices[0].message.content)
 
         except json.JSONDecodeError as je:
             self.logger.error(f"JSON parsing error: {str(je)}")
+            self.metrics_tracker.end_operation(f"llm_call_{operation_type}")
             raise HTTPException(status_code=500, detail=f"Error parsing LLM response: {str(je)}")
         except Exception as e:
+            self.metrics_tracker.end_operation(f"llm_call_{operation_type}")
             self.logger.error(f"{error_message}: {str(e)}\n{traceback.format_exc()}")
             raise HTTPException(status_code=500, detail=error_message)
 
@@ -242,13 +262,66 @@ class MasterAgent:
         self.logger.info("Generating final response")
         messages = [
             {"role": "system", "content": self.final_response_prompt},
-            {"role": "user", "content": f"Please analyze these stock market results and provide a detailed summary: {json.dumps(results)}"}
+            {"role": "user",
+             "content": f"Please analyze these stock market results and provide a detailed summary: {json.dumps(results)}"}
         ]
         return await self._execute_llm_call(
             messages=messages,
             error_message="Error in response generation",
             operation_type="final_response"
         )
+
+    # In MasterAgent class:
+
+    def aggregate_metrics(self, agent_results: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Aggregate metrics from master agent and all other agents
+        Args:
+            agent_results: Results from all agents containing their metrics
+        Returns:
+            Dictionary containing aggregated metrics from all sources
+        """
+        master_metrics = self.metrics_tracker.get_final_metrics()
+
+        aggregated_metrics = {
+            "master_agent": master_metrics,
+            "agents": {}
+        }
+
+        # Collect metrics from each agent's results
+        for agent_name, result in agent_results.items():
+            if isinstance(result, dict) and "metrics" in result:
+                aggregated_metrics["agents"][agent_name] = result["metrics"]
+
+        # Calculate total execution time and token usage
+        total_duration = master_metrics.get("execution_metrics", {}).get("total_duration", 0)
+        total_tokens = {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0
+        }
+
+        # Add up token usage from master agent and all other agents
+        for source in [master_metrics, *[m for m in aggregated_metrics["agents"].values()]]:
+            metrics = source.get("execution_metrics", {})
+            token_usage = metrics.get("token_usage", {})
+            total_tokens["prompt_tokens"] += token_usage.get("prompt_tokens", 0)
+            total_tokens["completion_tokens"] += token_usage.get("completion_tokens", 0)
+            total_tokens["total_tokens"] += token_usage.get("total_tokens", 0)
+
+            # Add durations from each agent
+            if "total_duration" in metrics:
+                total_duration += metrics["total_duration"]
+
+        # Add summary metrics
+        aggregated_metrics["summary"] = {
+            "total_execution_time": total_duration,
+            "total_token_usage": total_tokens,
+            "agent_count": len(aggregated_metrics["agents"]),
+            "timestamp": str(datetime.now())
+        }
+
+        return aggregated_metrics
 
 
 async def execute_agent(
@@ -327,16 +400,19 @@ async def analyze_stock(
         openai_client: AsyncOpenAI = Depends(get_openai_client)
 ) -> Dict[str, Any]:
     """
-    Analyze stocks based on user instruction with comprehensive error handling and logging
+    Analyze stocks based on user instruction with comprehensive metrics tracking
     """
     logger.info(f"Received analysis request: {request.instruction}")
 
-    try:
-        # Initialize master agent
-        master_agent = MasterAgent(openai_client)
+    # Initialize master agent with metrics tracking
+    master_agent = MasterAgent(openai_client)
+    master_agent.metrics_tracker.start_operation("total_analysis")
 
+    try:
         # Query Classification
+        master_agent.metrics_tracker.start_operation("classification_phase")
         classification = await master_agent.classify_query(request.instruction)
+        master_agent.metrics_tracker.end_operation("classification_phase")
         logger.debug(f"Query classification result: {classification}")
 
         if not classification.get("is_stock_related") or classification.get("confidence", 0) < 7:
@@ -347,7 +423,9 @@ async def analyze_stock(
             )
 
         # Task Breakdown
+        master_agent.metrics_tracker.start_operation("task_parsing_phase")
         parsed_tasks = await master_agent.parse_instruction(request.instruction, request.parameters)
+        master_agent.metrics_tracker.end_operation("task_parsing_phase")
         logger.info(f"Task breakdown: {parsed_tasks}")
 
         # Initialize agents
@@ -366,6 +444,7 @@ async def analyze_stock(
 
         # Execute agents in sequence with dependency tracking
         results = {}
+        master_agent.metrics_tracker.start_operation("agents_execution_phase")
         execution_order = sorted(parsed_tasks["agents"], key=lambda x: x["task_step"])
 
         for task in execution_order:
@@ -379,7 +458,8 @@ async def analyze_stock(
                 logger.warning(f"Agent {agent_name} not found, skipping")
                 continue
 
-            # Execute agent with task configuration
+            # Track each agent's execution
+            master_agent.metrics_tracker.start_operation(f"agent_{agent_name}")
             agent_result = await execute_agent(
                 agent_name=agent_name,
                 agent=agent,
@@ -387,6 +467,7 @@ async def analyze_stock(
                 previous_results=results,
                 logger=logger
             )
+            master_agent.metrics_tracker.end_operation(f"agent_{agent_name}")
 
             if agent_result:
                 results[agent_name] = agent_result
@@ -399,8 +480,21 @@ async def analyze_stock(
                         detail=f"Required agent {agent_name} failed to produce results"
                     )
 
+        master_agent.metrics_tracker.end_operation("agents_execution_phase")
+
         # Generate final response
+        master_agent.metrics_tracker.start_operation("response_generation_phase")
         final_response = await master_agent.generate_final_response(results)
+        master_agent.metrics_tracker.end_operation("response_generation_phase")
+
+        # End total analysis tracking
+        master_agent.metrics_tracker.end_operation("total_analysis")
+
+        # Aggregate metrics from all sources
+        aggregated_metrics = master_agent.aggregate_metrics(
+            agent_results=results
+        )
+
         logger.info("Analysis completed successfully")
 
         return StockAnalysisResponse(
@@ -416,12 +510,15 @@ async def analyze_stock(
                     "successful_tasks": len(results)
                 }
             },
-            results=results
+            results=results,
+            metrics=aggregated_metrics
         )
 
     except HTTPException as he:
+        master_agent.metrics_tracker.end_operation("total_analysis")
         raise he
     except Exception as e:
+        master_agent.metrics_tracker.end_operation("total_analysis")
         logger.error(f"Error in stock analysis: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=500,

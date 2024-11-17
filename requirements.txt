@@ -7,3 +7,4 @@ mangum==0.17.0
 pydantic==2.4.2
 yfinance==0.2.49
 motor==3.6.0
+psutil
